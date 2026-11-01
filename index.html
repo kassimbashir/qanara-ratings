@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<!-- Qanara digest rating page. Published on GitHub Pages (a public repository
+     holding only this file; no data, no secrets). The digest's 👍/👎 links open
+     it with the item, reader, run and token in the address; it sends the rating
+     to the Apps Script web app (feedback/apps_script/Code.gs), which checks the
+     token and stores it in the Google Sheet.
+     Why not the Apps Script's own page: Google's pages fail in browsers signed
+     in to several Google accounts. This page sends without Google cookies
+     (credentials: "omit"), so that can't happen.
+     Setup and updates: docs/feedback_setup.md. -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Qanara digest rating</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; font-size: 16px;
+           line-height: 1.5; color: #222; background: #fff; max-width: 480px; margin: 0 auto; padding: 24px 16px; }
+    h1 { font-size: 20px; margin: 0 0 16px; }
+    label { display: block; margin: 6px 0; }
+    .indent { margin-left: 26px; }
+    input[type=text], select, textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 8px;
+                                         border: 1px solid #bbb; border-radius: 6px; }
+    textarea { min-height: 80px; }
+    button { margin-top: 16px; font: inherit; padding: 10px 20px; border: 0; border-radius: 6px;
+             background: #1a6b3c; color: #fff; }
+    button:disabled { background: #999; }
+    .error { color: #b00020; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="up" class="hidden">
+    <h1 id="up-title">Saving your rating…</h1>
+    <p id="up-message"></p>
+  </div>
+
+  <form id="down" class="hidden">
+    <h1>👎 What was wrong with this item?</h1>
+    <label><input type="radio" name="reason" value="not_relevant" required> Not relevant to Qanara</label>
+    <label><input type="radio" name="reason" value="wrong_data"> Wrong data</label>
+    <div id="correction" class="indent hidden">
+      <label>Which field?
+        <select name="field">
+          <option value="amount">Amount (a plain number, e.g. 5000000)</option>
+          <option value="currency">Currency (e.g. USD, EUR)</option>
+          <option value="funding_round">Funding round (e.g. seed, series_a)</option>
+          <option value="country">Country</option>
+          <option value="relevance_score">Relevance score (1–5)</option>
+          <option value="crop">Crop</option>
+          <option value="facility_size_ha">Facility size (hectares)</option>
+          <option value="expected_date">Expected date</option>
+          <option value="other">Something else (explain below)</option>
+        </select>
+      </label>
+      <label>Correct value <input type="text" name="correct" maxlength="200"></label>
+    </div>
+    <label><input type="radio" name="reason" value="duplicate"> Duplicate (already reported)</label>
+    <label><input type="radio" name="reason" value="too_old"> Too old</label>
+    <label><input type="radio" name="reason" value="other"> Other</label>
+    <label>Comment (optional) <textarea name="comment" maxlength="1000"></textarea></label>
+    <label><input type="checkbox" name="track"> Track this company: always include its news</label>
+    <button type="submit" id="send">Send</button>
+    <p id="down-message" class="error"></p>
+  </form>
+
+  <div id="done" class="hidden">
+    <h1>Thanks!</h1>
+    <p>Saved. The agent learns from it at its next weekly run. You can close this page.</p>
+  </div>
+
+  <div id="invalid" class="hidden">
+    <h1>Link not complete</h1>
+    <p>Please use the 👍 / 👎 links in the latest Qanara digest email.</p>
+  </div>
+
+  <script>
+    // The Apps Script web app that stores ratings (not secret: anyone can send to it,
+    // but it only saves ratings whose token was signed by the agent).
+    var RATINGS_URL = "https://script.google.com/macros/s/AKfycbwKALmkty8unWnAkZrUlJlAL-I70po-WhgFrFwaCsqzl0DhdkasLgO1lguPmaTmGbdiFg/exec";
+
+    var q = new URLSearchParams(location.search);
+    var link = {item: q.get("i"), reader: q.get("r"), run: q.get("n"), token: q.get("t")};
+    var show = function (id) { document.getElementById(id).classList.remove("hidden"); };
+
+    // text/plain keeps this a "simple" request, so the browser sends it without a
+    // pre-check the Apps Script can't answer. No cookies: credentials "omit".
+    function send(data) {
+      return fetch(RATINGS_URL, {method: "POST", credentials: "omit", headers: {"Content-Type": "text/plain"},
+                                 body: JSON.stringify(Object.assign({action: "record"}, link, data))})
+        .then(function (response) { return response.json(); })
+        .then(function (answer) { if (!answer.ok) throw new Error(answer.error || "Not saved."); });
+    }
+
+    if (!(link.item && link.reader && link.run && link.token)) {
+      show("invalid");
+    } else if (q.get("a") === "up") {
+      // Saved by this script once the page opens in a browser: scanners that only fetch the link don't run it.
+      show("up");
+      send({vote: "up"}).then(function () {
+        document.getElementById("up-title").textContent = "👍 Thanks!";
+        document.getElementById("up-message").textContent =
+          "Saved as useful. The agent learns from it at its next weekly run. You can close this page.";
+      }).catch(function (error) {
+        document.getElementById("up-title").textContent = "Not saved";
+        document.getElementById("up-message").textContent = error.message;
+      });
+    } else {
+      show("down");
+      var form = document.getElementById("down");
+      form.addEventListener("change", function () {
+        var wrong = form.reason.value === "wrong_data";
+        document.getElementById("correction").classList.toggle("hidden", !wrong);
+        form.correct.required = wrong;
+      });
+      form.addEventListener("submit", function (event) {
+        event.preventDefault();
+        document.getElementById("send").disabled = true;
+        send({vote: "down", reason: form.reason.value, field: form.field.value, value: form.correct.value,
+              comment: form.comment.value, track: form.track.checked})
+          .then(function () { form.classList.add("hidden"); show("done"); })
+          .catch(function (error) {
+            document.getElementById("down-message").textContent = error.message;
+            document.getElementById("send").disabled = false;
+          });
+      });
+    }
+  </script>
+</body>
+</html>
